@@ -101,31 +101,27 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if actor_ids:
         params["with_cast"] = ",".join(map(str, actor_ids))
 
-    # Если нет фильтров — берем случайную страницу
-    if not genre_ids and not actor_ids:
-        params["page"] = random.randint(1, 500)
-    else:
-        params["page"] = 1
-
     logging.debug(f"[TMDb search] Params: {params}")
 
     url = "https://api.themoviedb.org/3/discover/movie"
     response = requests.get(url, params=params)
     data = response.json()
 
-    if not data.get("results"):
+    movies = data.get("results", [])
+
+    if not movies:
         await update.callback_query.message.reply_text("Фильмы не найдены по заданным фильтрам", reply_markup=build_keyboard())
         return
 
-    context.user_data["movies"] = data["results"]
+    random.shuffle(movies)  # перемешиваем фильмы, чтобы не было одинаковой последовательности
+
+    context.user_data["movies"] = movies
     context.user_data["index"] = 0
-
-    filters_msg = "Текущие фильтры:\n"
-    filters_msg += f"Жанры: {genres if genres else 'нет'}\n"
-    filters_msg += f"Актёры: {actors if actors else 'нет'}\n"
-    await update.callback_query.message.reply_text(filters_msg, reply_markup=build_keyboard())
-
     await send_movie(update, context, 0)
+
+# Функция для очистки суррогатных пар
+def clean_text(text: str) -> str:
+    return text.encode('utf-16', 'surrogatepass').decode('utf-16')
 
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
     movies = context.user_data.get("movies", [])
@@ -158,7 +154,7 @@ async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, m
     movie = response.json()
 
     description = movie.get("overview", "Описание недоступно")
-    description = clean_text(description)  # Очищаем от суррогатов
+    description = clean_text(description)  # очищаем от суррогатов
 
     await update.callback_query.message.reply_text(f"📖 {description}", reply_markup=build_keyboard())
 
