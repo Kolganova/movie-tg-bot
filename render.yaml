@@ -4,5 +4,6 @@ services:
     env: python
     region: oregon
     plan: free
+    pythonVersion: "3.10.12"
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
