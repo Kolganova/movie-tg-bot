@@ -94,6 +94,7 @@ async def years_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     genres = context.user_data.get("genres", "")
     actors = context.user_data.get("actors", "")
+    years = context.user_data.get("years", "")
 
     genre_ids = get_genre_ids(genres)
     actor_ids = get_actor_ids(actors)
@@ -109,6 +110,21 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         params["with_genres"] = ",".join(map(str, genre_ids))
     if actor_ids:
         params["with_cast"] = ",".join(map(str, actor_ids))
+
+    if years:
+        years = years.replace(" ", "")
+        if "-" in years:
+            parts = years.split("-")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                start_year = parts[0]
+                end_year = parts[1]
+                params["primary_release_date.gte"] = f"{start_year}-01-01"
+                params["primary_release_date.lte"] = f"{end_year}-12-31"
+        elif years.isdigit():
+            params["primary_release_date.gte"] = f"{years}-01-01"
+            params["primary_release_date.lte"] = f"{years}-12-31"
+
+    logging.debug(f"[TMDb search] Params: {params}")
 
     url = "https://api.themoviedb.org/3/discover/movie"
     response = requests.get(url, params=params)
