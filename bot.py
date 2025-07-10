@@ -1,7 +1,9 @@
 # bot.py — Telegram-бот через Webhook, рейтинг ≥ 8, с подсказками и навигацией
-import os, requests, difflib
+import os, requests, difflib, logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ConversationHandler, ContextTypes, filters
+
+logging.basicConfig(level=logging.DEBUG)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
@@ -101,7 +103,7 @@ app=ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 conv=ConversationHandler(entry_points=[CallbackQueryHandler(button_handler)], states={GENRES:[MessageHandler(filters.TEXT & ~filters.COMMAND,genres_input)],ACTORS:[MessageHandler(filters.TEXT & ~filters.COMMAND,actors_input)]}, fallbacks=[], allow_reentry=True)
 app.add_handler(CommandHandler("start",start))
 app.add_handler(conv)
-app.add_handler(CallbackQueryHandler(show_description,pattern=r"^desc\|"))
+app.add_handler(CallbackQueryHandler(show_description, pattern="desc|"))
 app.add_handler(CallbackQueryHandler(next_movie,pattern=r"^next\|"))
 print("🤖 Bot started! webhook mode")
 app.run_webhook(listen="0.0.0.0", port=int(os.getenv("PORT",3000)), webhook_url=os.getenv("WEBHOOK_URL"))
