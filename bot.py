@@ -1,5 +1,6 @@
 import os
 import random
+import time
 import logging
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -94,65 +95,70 @@ async def years_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     genres = context.user_data.get("genres", "")
     actors = context.user_data.get("actors", "")
-    years = context.user_data.get("years", "")
+    years  = context.user_data.get("years", "")
 
     genre_ids = get_genre_ids(genres)
     actor_ids = get_actor_ids(actors)
 
-    params = {
+    base_params = {
         "api_key": TMDB_API_KEY,
         "language": "ru",
         "sort_by": "popularity.desc",
         "vote_average.gte": 8,
     }
-
     if genre_ids:
-        params["with_genres"] = ",".join(map(str, genre_ids))
+        base_params["with_genres"] = ",".join(map(str, genre_ids))
     if actor_ids:
-        params["with_cast"] = ",".join(map(str, actor_ids))
-
+        base_params["with_cast"] = ",".join(map(str, actor_ids))
     if years:
-        years = years.replace(" ", "")
-        if "-" in years:
-            parts = years.split("-")
-            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                start_year = parts[0]
-                end_year = parts[1]
-                params["primary_release_date.gte"] = f"{start_year}-01-01"
-                params["primary_release_date.lte"] = f"{end_year}-12-31"
-        elif years.isdigit():
-            params["primary_release_date.gte"] = f"{years}-01-01"
-            params["primary_release_date.lte"] = f"{years}-12-31"
-
-    logging.debug(f"[TMDb search] Params: {params}")
+        # твоя логика разбора years → primary_release_date.gte/​lte
+        # например:
+        start, end = parse_years(years)
+        base_params["primary_release_date.gte"] = f"{start}-01-01"
+        base_params["primary_release_date.lte"] = f"{end}-12-31"
 
     url = "https://api.themoviedb.org/3/discover/movie"
-    response = requests.get(url, params=params)
-    data = response.json()
-    results = data.get("results", [])
-
-    # 🔁 Если ничего не найдено — пробуем только по актёрам
-    if not results and actor_ids:
-        logging.debug("Нет результатов с жанрами. Пробуем только по актёрам...")
-        params.pop("with_genres", None)  # Убираем жанры
-        response = requests.get(url, params=params)
-        data = response.json()
+    found = []
+    # Перебираем до 5 страниц, чтобы найти хотя бы один фильм с IMDb ≥ 8.0
+    for page in range(1, 6):
+        params = dict(base_params, page=page)
+        logging.debug(f"[TMDb] discover page={page} params={params}")
+        resp = requests.get(url, params=params)
+        data = resp.json()
         results = data.get("results", [])
+        if not results:
+            continue
 
-    # 🔁 Если всё ещё пусто
-    if not results:
-        await update.callback_query.message.reply_text("Фильмы не найдены по заданным фильтрам", reply_markup=build_keyboard())
+        # Перемешиваем, чтобы не всегда в порядке TMDb
+        random.shuffle(results)
+
+        # Проверяем каждый фильм на IMDb
+        for m in results:
+            title = m.get("title") or m.get("name")
+            imdb_raw = get_imdb_rating(title)
+            try:
+                if float(imdb_raw) >= 8.0:
+                    found.append(m)
+                    break  # нашёл один — выходим из цикла results
+            except:
+                continue
+        if found:
+            break  # нашёл — выходим из цикла страниц
+        # Чтобы не превысить rate limit OMDb
+        time.sleep(0.3)
+
+    if not found:
+        await update.callback_query.message.reply_text(
+            "Не нашлось фильмов с IMDb ≥ 8.0 по заданным фильтрам",
+            reply_markup=build_keyboard()
+        )
         return
 
-    # Рандомизируем
-    import random
-    random.shuffle(results)
-
-    context.user_data["movies"] = results
+    # Сохраняем только этот фильм в очередь
+    context.user_data["movies"] = found
     context.user_data["index"] = 0
     await send_movie(update, context, 0)
-
-
+    
 # Функция для очистки суррогатных пар
 def clean_text(text: str) -> str:
     return text.encode('utf-16', 'surrogatepass').decode('utf-16')
@@ -224,6 +230,13 @@ async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, m
 
     await update.callback_query.message.reply_text(f"📖 {description}", reply_markup=build_keyboard())
 
+def parse_years(text: str):
+    text = text.strip()
+    if "-" in text:
+        a, b = text.split("-", 1)
+        return a, b
+    return text, text
+    
 def get_all_genres():
     global cached_genres
     if cached_genres:
