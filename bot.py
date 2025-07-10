@@ -166,8 +166,9 @@ def clean_text(text: str) -> str:
     return text.encode('utf-16', 'surrogatepass').decode('utf-16')
 
 def escape_markdown(text):
-    # Экранируем специальные символы для MarkdownV2
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    if not text:
+        return ''
+    escape_chars = r'\_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
@@ -179,31 +180,32 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: 
     movie = movies[index]
     context.user_data["index"] = index
 
-    title = movie.get("title", "Без названия")
-    poster_path = movie.get("poster_path")
-    photo_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
-    tmdb_rating = movie.get("vote_average", "—")
+title = movie.get("title", "Без названия")
+description = movie.get("overview", "Описание недоступно")
+tmdb_rating = movie.get("vote_average", "—")
+imdb_rating = get_imdb_rating(title)
 
-    # Получаем описание и экранируем для MarkdownV2 спойлера
-    description = movie.get("overview", "Описание недоступно")
-    escaped_description = escape_markdown(description)
-    spoiler_description = f"||{escaped_description}||"
+# Экранируем всё
+escaped_title = escape_markdown(title)
+escaped_description = escape_markdown(description)
+escaped_tmdb = escape_markdown(str(tmdb_rating))
+escaped_imdb = escape_markdown(str(imdb_rating))
 
-    imdb_rating = get_imdb_rating(title)
+spoiler_description = f"||{escaped_description}||"
 
-    caption = (
-        f"🎬 <b>{title}</b>\n"
-        f"⭐ TMDb: <b>{tmdb_rating}</b>\n"
-        f"🌐 IMDb: <b>{imdb_rating}</b>\n\n"
-        f"{spoiler_description}"
-    )
+caption = (
+    f"*🎬 {escaped_title}*\n"
+    f"⭐ TMDb: *{escaped_tmdb}*\n"
+    f"🌐 IMDb: *{escaped_imdb}*\n\n"
+    f"{spoiler_description}"
+)
 
-    await update.callback_query.message.reply_photo(
-        photo=photo_url,
-        caption=caption,
-        parse_mode="MarkdownV2",
-        reply_markup=build_movie_keyboard(movie["id"], index)
-    )
+await update.callback_query.message.reply_photo(
+    photo=photo_url,
+    caption=caption,
+    parse_mode="MarkdownV2",
+    reply_markup=build_movie_keyboard(movie["id"], index)
+)
 
 async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, movie_id: str):
     url = f"https://api.themoviedb.org/3/movie/{movie_id}"
