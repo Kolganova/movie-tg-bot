@@ -95,7 +95,7 @@ async def years_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     genres = context.user_data.get("genres", "")
     actors = context.user_data.get("actors", "")
-    years  = context.user_data.get("years", "")
+    years = context.user_data.get("years", "")
 
     genre_ids = get_genre_ids(genres)
     actor_ids = get_actor_ids(actors)
@@ -106,21 +106,20 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "sort_by": "popularity.desc",
         "vote_average.gte": 8,
     }
+
     if genre_ids:
         base_params["with_genres"] = ",".join(map(str, genre_ids))
     if actor_ids:
         base_params["with_cast"] = ",".join(map(str, actor_ids))
     if years:
-        # твоя логика разбора years → primary_release_date.gte/​lte
-        # например:
         start, end = parse_years(years)
         base_params["primary_release_date.gte"] = f"{start}-01-01"
         base_params["primary_release_date.lte"] = f"{end}-12-31"
 
     url = "https://api.themoviedb.org/3/discover/movie"
     found = []
-    # Перебираем до 5 страниц, чтобы найти хотя бы один фильм с IMDb ≥ 8.0
-    for page in range(1, 10):
+
+    for page in range(1, 11):  # до 10 страниц
         params = dict(base_params, page=page)
         logging.debug(f"[TMDb] discover page={page} params={params}")
         resp = requests.get(url, params=params)
@@ -129,34 +128,31 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not results:
             continue
 
-        # Перемешиваем, чтобы не всегда в порядке TMDb
         random.shuffle(results)
 
-        logging.info(f"Searching movies with params: {params}")
-
-        # Проверяем каждый фильм на IMDb
         for m in results:
             title = m.get("title") or m.get("name")
             imdb_raw = get_imdb_rating(title)
             try:
-                if float(imdb_raw) >= 7.0:
+                if float(imdb_raw) >= 8.0:
+                    m["imdbRating"] = imdb_raw
                     found.append(m)
-                    break  # нашёл один — выходим из цикла results
+                    if len(found) >= 30:
+                        break
             except:
                 continue
-        if found:
-            break  # нашёл — выходим из цикла страниц
-        # Чтобы не превысить rate limit OMDb
+        if len(found) >= 30:
+            break
         time.sleep(0.3)
 
     if not found:
         await update.callback_query.message.reply_text(
-            "Не нашлось фильмов с IMDb ≥ 8.0 по заданным фильтрам",
+            "Не нашлось фильмов с IMDb ≥ 8.0 по заданным фильтрам",
             reply_markup=build_keyboard()
         )
         return
 
-    # Сохраняем только этот фильм в очередь
+    random.shuffle(found)
     context.user_data["movies"] = found
     context.user_data["index"] = 0
     await send_movie(update, context, 0)
