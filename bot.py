@@ -139,7 +139,7 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title = m.get("title") or m.get("name")
             imdb_raw = get_imdb_rating(title)
             try:
-                if float(imdb_raw) >= 8.0:
+                if float(imdb_raw) >= 7.0:
                     found.append(m)
                     break  # нашёл один — выходим из цикла results
             except:
