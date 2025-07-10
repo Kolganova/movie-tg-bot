@@ -37,7 +37,6 @@ def build_keyboard():
 
 def build_movie_keyboard(movie_id, index):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("\ud83d\udcd6 Описание", callback_data=f"desc|{movie_id}")],
         [InlineKeyboardButton("\u27a1 Далее", callback_data=f"next|{index+1}")],
         [InlineKeyboardButton("\U0001F39E Указать жанры", callback_data="genres")],
         [InlineKeyboardButton("\U0001F3AD Указать актёров", callback_data="actors")],
@@ -174,58 +173,36 @@ def escape_markdown(text):
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
     movies = context.user_data.get("movies", [])
     if index >= len(movies):
-        await update.callback_query.message.reply_text(
-            "Не нашлось фильмов с рейтингом IMDb ≥ 8.0",
-            reply_markup=build_keyboard()
-        )
+        await update.callback_query.message.reply_text("Фильмы закончились", reply_markup=build_keyboard())
         return
 
     movie = movies[index]
-    tmdb_id = movie["id"]
+    context.user_data["index"] = index
+
     title = movie.get("title", "Без названия")
-    poster = movie.get("poster_path")
-    photo_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
+    poster_path = movie.get("poster_path")
+    photo_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
     tmdb_rating = movie.get("vote_average", "—")
 
-    # Получаем IMDb-рейтинг
-    imdb_rating_raw = get_imdb_rating(title)
-    try:
-        imdb_rating = float(imdb_rating_raw)
-    except:
-        imdb_rating = 0.0
+    # Получаем описание и экранируем для MarkdownV2 спойлера
+    description = movie.get("overview", "Описание недоступно")
+    escaped_description = escape_markdown(description)
+    spoiler_description = f"||{escaped_description}||"
 
-    # Пропускаем фильм без рейтинга или с IMDb < 8.0
-    if imdb_rating < 8.0:
-        await send_movie(update, context, index + 1)
-        return
-
-    # Доп. инфо о фильме
-    resp = requests.get(
-        f"https://api.themoviedb.org/3/movie/{tmdb_id}",
-        params={"api_key": TMDB_API_KEY, "language": "ru"}
-    )
-    details = resp.json()
-    year = details.get("release_date", "")[:4] or "—"
-    countries = ", ".join(c["name"] for c in details.get("production_countries", [])) or "—"
-    overview = details.get("overview", "")
-
-    # Спойлер
-    spoiler = f"\n📖 <spoiler>{overview}</spoiler>" if overview else ""
+    imdb_rating = get_imdb_rating(title)
 
     caption = (
-        f"🎬 <b>{title}</b> ({year})\n"
-        f"🌍 Страна: <b>{countries}</b>\n"
-        f"⭐ TMDB: <b>{tmdb_rating}</b>\n"
-        f"🌐 IMDb: <b>{imdb_rating_raw}</b>{spoiler}"
+        f"🎬 <b>{title}</b>\n"
+        f"⭐ TMDb: <b>{tmdb_rating}</b>\n"
+        f"🌐 IMDb: <b>{imdb_rating}</b>\n\n"
+        f"{spoiler_description}"
     )
-
-    context.user_data["index"] = index
 
     await update.callback_query.message.reply_photo(
         photo=photo_url,
         caption=caption,
-        parse_mode="HTML",
-        reply_markup=build_movie_keyboard(tmdb_id, index)
+        parse_mode="MarkdownV2",
+        reply_markup=build_movie_keyboard(movie["id"], index)
     )
 
 async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, movie_id: str):
