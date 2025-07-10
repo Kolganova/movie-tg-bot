@@ -1,4 +1,5 @@
 import os
+import random
 import logging
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -100,6 +101,14 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if actor_ids:
         params["with_cast"] = ",".join(map(str, actor_ids))
 
+    # Если нет фильтров — берем случайную страницу
+    if not genre_ids and not actor_ids:
+        params["page"] = random.randint(1, 500)
+    else:
+        params["page"] = 1
+
+    logging.debug(f"[TMDb search] Params: {params}")
+
     url = "https://api.themoviedb.org/3/discover/movie"
     response = requests.get(url, params=params)
     data = response.json()
@@ -110,6 +119,12 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["movies"] = data["results"]
     context.user_data["index"] = 0
+
+    filters_msg = "Текущие фильтры:\n"
+    filters_msg += f"Жанры: {genres if genres else 'нет'}\n"
+    filters_msg += f"Актёры: {actors if actors else 'нет'}\n"
+    await update.callback_query.message.reply_text(filters_msg, reply_markup=build_keyboard())
+
     await send_movie(update, context, 0)
 
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
