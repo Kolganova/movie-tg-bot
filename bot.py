@@ -179,7 +179,9 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: 
 
     movie = movies[index]
     context.user_data["index"] = index
-
+    
+    poster_path = movie.get("poster_path")
+    photo_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
     title = movie.get("title", "Без названия")
     description = movie.get("overview", "Описание недоступно")
     tmdb_rating = movie.get("vote_average", "—")
