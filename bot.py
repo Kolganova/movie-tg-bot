@@ -15,7 +15,7 @@ print("TMDB_API_KEY =", TMDB_API_KEY)
 print("OMDB_API_KEY =", OMDB_API_KEY)
 print("PORT =", os.getenv("PORT"))
 print("WEBHOOK_URL =", os.getenv("WEBHOOK_URL"))
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 
 # Стейты
 GENRES, ACTORS, YEARS = range(3)
@@ -131,6 +131,8 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Перемешиваем, чтобы не всегда в порядке TMDb
         random.shuffle(results)
+
+        logging.info(f"Searching movies with params: {params}")
 
         # Проверяем каждый фильм на IMDb
         for m in results:
