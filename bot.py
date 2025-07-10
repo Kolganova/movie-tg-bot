@@ -200,11 +200,11 @@ caption = (
     f"{spoiler_description}"
 )
 
-await update.callback_query.message.reply_photo(
-    photo=photo_url,
-    caption=caption,
-    parse_mode="MarkdownV2",
-    reply_markup=build_movie_keyboard(movie["id"], index)
+    await update.callback_query.message.reply_photo(
+        photo=photo_url,
+        caption=caption,
+        parse_mode="MarkdownV2",
+        reply_markup=build_movie_keyboard(movie["id"], index)
 )
 
 async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, movie_id: str):
