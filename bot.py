@@ -45,7 +45,7 @@ def build_movie_keyboard(movie_id, index):
     ])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Что хочешь сделать?", reply_markup=build_keyboard())
+    await update.message.reply_text("Привет <3 Что хочешь сделать?", reply_markup=build_keyboard())
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
