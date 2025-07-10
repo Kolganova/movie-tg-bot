@@ -158,7 +158,9 @@ async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, m
     movie = response.json()
 
     description = movie.get("overview", "Описание недоступно")
-    await update.callback_query.message.reply_text(f"\ud83d\udcd6 {description}", reply_markup=build_keyboard())
+    description = clean_text(description)  # Очищаем от суррогатов
+
+    await update.callback_query.message.reply_text(f"📖 {description}", reply_markup=build_keyboard())
 
 def get_all_genres():
     global cached_genres
