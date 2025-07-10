@@ -3,6 +3,12 @@ import os, requests, difflib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ConversationHandler, ContextTypes, filters
 
+
+print("TELEGRAM_TOKEN =", TELEGRAM_TOKEN)
+print("TMDB_API_KEY =", TMDB_API_KEY)
+print("PORT =", os.getenv("PORT"))
+print("WEBHOOK_URL =", os.getenv("WEBHOOK_URL"))
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
