@@ -94,7 +94,6 @@ async def years_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     genres = context.user_data.get("genres", "")
     actors = context.user_data.get("actors", "")
-    years = context.user_data.get("years", "")
 
     genre_ids = get_genre_ids(genres)
     actor_ids = get_actor_ids(actors)
@@ -111,88 +110,66 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if actor_ids:
         params["with_cast"] = ",".join(map(str, actor_ids))
 
-    # Парсим years, чтобы получить gte и lte
-    if years:
-        years = years.replace(" ", "")
-        if "-" in years:
-            parts = years.split("-")
-            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                start_year = parts[0]
-                end_year = parts[1]
-                params["primary_release_date.gte"] = f"{start_year}-01-01"
-                params["primary_release_date.lte"] = f"{end_year}-12-31"
-        elif years.isdigit():
-            params["primary_release_date.gte"] = f"{years}-01-01"
-            params["primary_release_date.lte"] = f"{years}-12-31"
-
-    logging.debug(f"[TMDb search] Params: {params}")
-
     url = "https://api.themoviedb.org/3/discover/movie"
     response = requests.get(url, params=params)
     data = response.json()
+    results = data.get("results", [])
 
-    movies = data.get("results", [])
+    # 🔁 Если ничего не найдено — пробуем только по актёрам
+    if not results and actor_ids:
+        logging.debug("Нет результатов с жанрами. Пробуем только по актёрам...")
+        params.pop("with_genres", None)  # Убираем жанры
+        response = requests.get(url, params=params)
+        data = response.json()
+        results = data.get("results", [])
 
-    if not movies:
+    # 🔁 Если всё ещё пусто
+    if not results:
         await update.callback_query.message.reply_text("Фильмы не найдены по заданным фильтрам", reply_markup=build_keyboard())
         return
 
-    random.shuffle(movies)  # перемешиваем фильмы для рандома
+    # Рандомизируем
+    import random
+    random.shuffle(results)
 
-    context.user_data["movies"] = movies
+    context.user_data["movies"] = results
     context.user_data["index"] = 0
     await send_movie(update, context, 0)
+
 
 # Функция для очистки суррогатных пар
 def clean_text(text: str) -> str:
     return text.encode('utf-16', 'surrogatepass').decode('utf-16')
 
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
-    movies = context.user_data.get("movies", [])
-    if index >= len(movies):
-        await update.callback_query.message.reply_text("Фильмы закончились", reply_markup=build_keyboard())
-        return
+    ...
+    tmdb_id = movie["id"]
 
-    movie = movies[index]
-    context.user_data["index"] = index
+    # Получаем расширенную инфу
+    details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}"
+    details_params = {"api_key": TMDB_API_KEY, "language": "ru"}
+    details = requests.get(details_url, params=details_params).json()
 
-    title = movie.get("title", "Без названия")
-    poster_path = movie.get("poster_path")
-    photo_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
-    tmdb_rating = movie.get("vote_average", "—")
-    release_date = movie.get("release_date", "")
-    year = release_date.split("-")[0] if release_date else "—"
-    countries = movie.get("production_countries", [])
-    # production_countries не приходит в discover, надо дополнительно запросить детали фильма, либо сделать пустой список:
-    country_names = []
-    # Для ускорения можно подгружать детали фильма один раз при отправке, например:
-    # Но чтобы не менять логику сильно, будем делать запрос при отправке:
-    # -- см. ниже исправленный send_movie --
-
-    imdb_rating = get_imdb_rating(title)
-
-    # Для country_names запросим детали фильма:
-    url = f"https://api.themoviedb.org/3/movie/{movie['id']}"
-    params = {"api_key": TMDB_API_KEY, "language": "ru"}
-    resp = requests.get(url, params=params)
-    if resp.status_code == 200:
-        details = resp.json()
-        country_names = [c.get("name") for c in details.get("production_countries", [])]
-
-    countries_str = ", ".join(country_names) if country_names else "—"
+    year = details.get("release_date", "")[:4] or "—"
+    countries = ", ".join([c["name"] for c in details.get("production_countries", [])]) or "—"
+    overview = details.get("overview", "")
 
     caption = (
-        f"🎬 <b>{title}</b> ({year})\n"
+        f"🎬 <b>{title}</b>\n"
+        f"📅 Год: <b>{year}</b>\n"
+        f"🌍 Страна: <b>{countries}</b>\n"
         f"⭐ TMDB: <b>{tmdb_rating}</b>\n"
         f"🌐 IMDb: <b>{imdb_rating}</b>\n"
-        f"🌍 Страны: {countries_str}"
     )
+
+    if overview:
+        caption += f"\n📖 <spoiler>{overview}</spoiler>"
 
     await update.callback_query.message.reply_photo(
         photo=photo_url,
         caption=caption,
         parse_mode="HTML",
-        reply_markup=build_movie_keyboard(movie["id"], index)
+        reply_markup=build_movie_keyboard(tmdb_id, index)
     )
 
 async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, movie_id: str):
