@@ -17,7 +17,7 @@ print("WEBHOOK_URL =", os.getenv("WEBHOOK_URL"))
 logging.basicConfig(level=logging.DEBUG)
 
 # Стейты
-GENRES, ACTORS = range(2)
+GENRES, ACTORS, YEARS = range(3)
 
 # Логгинг
 logging.basicConfig(level=logging.DEBUG)
@@ -26,10 +26,11 @@ cached_genres = {}
 
 def build_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("\U0001F39E Указать жанры", callback_data="genres")],
-        [InlineKeyboardButton("\U0001F3AD Указать актёров", callback_data="actors")],
-        [InlineKeyboardButton("\U0001F50E Найти фильмы", callback_data="search")],
-        [InlineKeyboardButton("\u274C Сбросить фильтры", callback_data="reset")]
+        [InlineKeyboardButton("🎞 Указать жанры", callback_data="genres")],
+        [InlineKeyboardButton("🎭 Указать актёров", callback_data="actors")],
+        [InlineKeyboardButton("📅 Указать год/период", callback_data="years")],
+        [InlineKeyboardButton("🔄 Сбросить фильтры", callback_data="reset")],
+        [InlineKeyboardButton("🔎 Найти фильмы", callback_data="search")],
     ])
 
 def build_movie_keyboard(movie_id, index):
@@ -51,18 +52,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "genres":
-        genres = get_all_genres()
-        genre_list = "\n".join(f"\u2022 {name}" for name in genres.keys())
-        await query.message.reply_text(f"Выбери жанры из списка, введи через запятую:\n{genre_list}")
+        await query.message.reply_text("Введи жанры через запятую")
         return GENRES
     elif data == "actors":
         await query.message.reply_text("Введи имена актёров через запятую")
         return ACTORS
-    elif data == "search":
-        await search_movies(update, context)
+    elif data == "years":
+        await query.message.reply_text("Введи год или диапазон годов через дефис. Например:\n2023\n2020-2023")
+        return YEARS
     elif data == "reset":
         context.user_data.clear()
         await query.message.reply_text("Фильтры сброшены", reply_markup=build_keyboard())
+        return ConversationHandler.END
+    elif data == "search":
+        await search_movies(update, context)
     elif data.startswith("desc|"):
         movie_id = data.split("|")[1]
         await send_description(update, context, movie_id)
@@ -82,9 +85,16 @@ async def actors_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Актёры сохранены", reply_markup=build_keyboard())
     return ConversationHandler.END
 
+async def years_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data["years"] = text
+    await update.message.reply_text(f"Год(ы) сохранены: {text}", reply_markup=build_keyboard())
+    return ConversationHandler.END
+
 async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     genres = context.user_data.get("genres", "")
     actors = context.user_data.get("actors", "")
+    years = context.user_data.get("years", "")
 
     genre_ids = get_genre_ids(genres)
     actor_ids = get_actor_ids(actors)
@@ -101,6 +111,20 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if actor_ids:
         params["with_cast"] = ",".join(map(str, actor_ids))
 
+    # Парсим years, чтобы получить gte и lte
+    if years:
+        years = years.replace(" ", "")
+        if "-" in years:
+            parts = years.split("-")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                start_year = parts[0]
+                end_year = parts[1]
+                params["primary_release_date.gte"] = f"{start_year}-01-01"
+                params["primary_release_date.lte"] = f"{end_year}-12-31"
+        elif years.isdigit():
+            params["primary_release_date.gte"] = f"{years}-01-01"
+            params["primary_release_date.lte"] = f"{years}-12-31"
+
     logging.debug(f"[TMDb search] Params: {params}")
 
     url = "https://api.themoviedb.org/3/discover/movie"
@@ -113,7 +137,7 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.reply_text("Фильмы не найдены по заданным фильтрам", reply_markup=build_keyboard())
         return
 
-    random.shuffle(movies)  # перемешиваем фильмы, чтобы не было одинаковой последовательности
+    random.shuffle(movies)  # перемешиваем фильмы для рандома
 
     context.user_data["movies"] = movies
     context.user_data["index"] = 0
@@ -136,9 +160,33 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: 
     poster_path = movie.get("poster_path")
     photo_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
     tmdb_rating = movie.get("vote_average", "—")
+    release_date = movie.get("release_date", "")
+    year = release_date.split("-")[0] if release_date else "—"
+    countries = movie.get("production_countries", [])
+    # production_countries не приходит в discover, надо дополнительно запросить детали фильма, либо сделать пустой список:
+    country_names = []
+    # Для ускорения можно подгружать детали фильма один раз при отправке, например:
+    # Но чтобы не менять логику сильно, будем делать запрос при отправке:
+    # -- см. ниже исправленный send_movie --
+
     imdb_rating = get_imdb_rating(title)
 
-    caption = f"\U0001F3AC <b>{title}</b>\n\u2B50 TMDB: <b>{tmdb_rating}</b>\n\U0001F310 IMDb: <b>{imdb_rating}</b>"
+    # Для country_names запросим детали фильма:
+    url = f"https://api.themoviedb.org/3/movie/{movie['id']}"
+    params = {"api_key": TMDB_API_KEY, "language": "ru"}
+    resp = requests.get(url, params=params)
+    if resp.status_code == 200:
+        details = resp.json()
+        country_names = [c.get("name") for c in details.get("production_countries", [])]
+
+    countries_str = ", ".join(country_names) if country_names else "—"
+
+    caption = (
+        f"🎬 <b>{title}</b> ({year})\n"
+        f"⭐ TMDB: <b>{tmdb_rating}</b>\n"
+        f"🌐 IMDb: <b>{imdb_rating}</b>\n"
+        f"🌍 Страны: {countries_str}"
+    )
 
     await update.callback_query.message.reply_photo(
         photo=photo_url,
@@ -201,13 +249,14 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button_handler)],
-        states={
-            GENRES: [MessageHandler(filters.TEXT & ~filters.COMMAND, genres_input)],
-            ACTORS: [MessageHandler(filters.TEXT & ~filters.COMMAND, actors_input)],
-        },
-        fallbacks=[],
-        allow_reentry=True,
+    entry_points=[CallbackQueryHandler(button_handler)],
+    states={
+        GENRES: [MessageHandler(filters.TEXT & ~filters.COMMAND, genres_input)],
+        ACTORS: [MessageHandler(filters.TEXT & ~filters.COMMAND, actors_input)],
+        YEARS: [MessageHandler(filters.TEXT & ~filters.COMMAND, years_input)],
+    },
+    fallbacks=[],
+    allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("start", start))
