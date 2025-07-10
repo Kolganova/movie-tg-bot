@@ -173,12 +173,13 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: 
         await update.callback_query.message.reply_text("Фильмы закончились", reply_markup=build_keyboard())
         return
 
-    movie = movies[index]
+    movie = context.user_data["movies"][index]
+
     context.user_data["index"] = index
     
     poster_path = movie.get("poster_path")
     photo_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
-    title = movie.get("title", "Без названия")
+    title = get_movie_title_ru(movie["id"]) or movie.get("title") or "Без названия"
     description = movie.get("overview", "Описание недоступно")
     tmdb_rating = movie.get("vote_average", "—")
     imdb_rating = get_imdb_rating(title)
@@ -254,6 +255,15 @@ def get_actor_ids(actors_text):
         if res["results"]:
             actor_ids.append(res["results"][0]["id"])
     return actor_ids
+
+def get_movie_title_ru(movie_id):
+    url = f"https://api.themoviedb.org/3/movie/{movie_id}"
+    params = {"api_key": TMDB_API_KEY, "language": "ru"}
+    resp = requests.get(url, params=params)
+    if resp.status_code == 200:
+        data = resp.json()
+        return data.get("title")  # локализованное название
+    return None
 
 def get_imdb_rating(title):
     if not OMDB_API_KEY:
