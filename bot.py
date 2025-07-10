@@ -2,23 +2,26 @@ import os
 import logging
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.ext import (
-    ApplicationBuilder,
-    ContextTypes,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ConversationHandler,
-    filters
-)
+from telegram.ext import (ApplicationBuilder,ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, ConversationHandler, filters)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+OMDB_API_KEY = os.getenv("OMDB_API_KEY")
 
+print("TELEGRAM_TOKEN =", TELEGRAM_TOKEN)
+print("TMDB_API_KEY =", TMDB_API_KEY)
+print("OMDB_API_KEY =", OMDB_API_KEY)
+print("PORT =", os.getenv("PORT"))
+print("WEBHOOK_URL =", os.getenv("WEBHOOK_URL"))
 logging.basicConfig(level=logging.DEBUG)
 
+# Стейты
 GENRES, ACTORS = range(2)
 
+# Логгинг
+logging.basicConfig(level=logging.DEBUG)
+
+# Кнопки главного меню
 def build_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎞 Указать жанры", callback_data="genres")],
@@ -26,18 +29,24 @@ def build_keyboard():
         [InlineKeyboardButton("🔎 Найти фильмы", callback_data="search")],
     ])
 
+# Кнопки у фильма
 def build_movie_keyboard(movie_id, index):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📖 Описание", callback_data=f"desc|{movie_id}")],
         [InlineKeyboardButton("➡ Далее", callback_data=f"next|{index+1}")],
+        [InlineKeyboardButton("🎞 Указать жанры", callback_data="genres")],
+        [InlineKeyboardButton("🎭 Указать актёров", callback_data="actors")],
+        [InlineKeyboardButton("🔎 Найти фильмы", callback_data="search")],
     ])
 
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Что хочешь сделать?",
         reply_markup=build_keyboard()
     )
 
+# Обработка кнопок
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -60,16 +69,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
+# Сохранение жанров
 async def genres_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["genres"] = update.message.text
     await update.message.reply_text("Жанры сохранены", reply_markup=build_keyboard())
     return ConversationHandler.END
 
+# Сохранение актёров
 async def actors_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["actors"] = update.message.text
     await update.message.reply_text("Актёры сохранены", reply_markup=build_keyboard())
     return ConversationHandler.END
 
+# Поиск фильмов
 async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     genres = context.user_data.get("genres", "")
     actors = context.user_data.get("actors", "")
@@ -92,24 +104,35 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     movies = data.get("results", [])
 
     if not movies:
-        await update.callback_query.message.reply_text("Фильмы не найдены")
+        await update.callback_query.message.reply_text("Фильмы не найдены", reply_markup=build_keyboard())
         return
 
     context.user_data["movies"] = movies
     context.user_data["index"] = 0
     await send_movie(update, context, 0)
 
+# Отправка фильма
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
     movies = context.user_data.get("movies", [])
     if index >= len(movies):
-        await update.callback_query.message.reply_text("Фильмы закончились")
+        await update.callback_query.message.reply_text("Фильмы закончились", reply_markup=build_keyboard())
         return
 
     movie = movies[index]
     context.user_data["index"] = index
 
-    photo_url = f"https://image.tmdb.org/t/p/w500{movie['poster_path']}"
-    caption = f"🎬 <b>{movie['title']}</b>\n⭐ <b>{movie['vote_average']}</b>"
+    title = movie.get("title", "Без названия")
+    poster_path = movie.get("poster_path")
+    photo_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
+    tmdb_rating = movie.get("vote_average", "—")
+
+    imdb_rating = get_imdb_rating(title)
+
+    caption = (
+        f"🎬 <b>{title}</b>\n"
+        f"⭐ TMDB: <b>{tmdb_rating}</b>\n"
+        f"🌐 IMDb: <b>{imdb_rating}</b>"
+    )
 
     await update.callback_query.message.reply_photo(
         photo=photo_url,
@@ -118,6 +141,7 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: 
         reply_markup=build_movie_keyboard(movie["id"], index)
     )
 
+# Описание фильма
 async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, movie_id: str):
     url = f"https://api.themoviedb.org/3/movie/{movie_id}"
     params = {"api_key": TMDB_API_KEY, "language": "ru"}
@@ -125,8 +149,9 @@ async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, m
     movie = response.json()
 
     description = movie.get("overview", "Описание недоступно")
-    await update.callback_query.message.reply_text(f"📖 {description}")
+    await update.callback_query.message.reply_text(f"📖 {description}", reply_markup=build_keyboard())
 
+# Жанры → ID
 def get_genre_ids(genres_text):
     if not genres_text:
         return []
@@ -136,6 +161,7 @@ def get_genre_ids(genres_text):
     genre_map = {g["name"].lower(): g["id"] for g in data.get("genres", [])}
     return [genre_map[g] for g in genres if g in genre_map]
 
+# Актёры → ID
 def get_actor_ids(actors_text):
     if not actors_text:
         return []
@@ -147,6 +173,20 @@ def get_actor_ids(actors_text):
             actor_ids.append(res["results"][0]["id"])
     return actor_ids
 
+# IMDb рейтинг через OMDb
+def get_imdb_rating(title):
+    if not OMDB_API_KEY:
+        return "—"
+    url = f"http://www.omdbapi.com/?apikey={OMDB_API_KEY}&t={title}"
+    try:
+        res = requests.get(url)
+        data = res.json()
+        return data.get("imdbRating", "—")
+    except Exception as e:
+        logging.error(f"Ошибка IMDb: {e}")
+        return "—"
+
+# Запуск
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
@@ -154,10 +194,10 @@ if __name__ == "__main__":
         entry_points=[CallbackQueryHandler(button_handler)],
         states={
             GENRES: [MessageHandler(filters.TEXT & ~filters.COMMAND, genres_input)],
-            ACTORS: [MessageHandler(filters.TEXT & ~filters.COMMAND, actors_input)]
+            ACTORS: [MessageHandler(filters.TEXT & ~filters.COMMAND, actors_input)],
         },
         fallbacks=[],
-        allow_reentry=True
+        allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("start", start))
@@ -165,8 +205,5 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(button_handler))
 
     port = int(os.environ.get("PORT", 8080))
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        webhook_url=os.environ.get("WEBHOOK_URL")
+    app.run_webhook(listen="0.0.0.0", port=port, webhook_url=os.environ.get("WEBHOOK_URL")
     )
