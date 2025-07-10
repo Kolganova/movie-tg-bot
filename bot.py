@@ -1,109 +1,172 @@
-# bot.py — Telegram-бот через Webhook, рейтинг ≥ 8, с подсказками и навигацией
-import os, requests, difflib, logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ConversationHandler, ContextTypes, filters
-
-logging.basicConfig(level=logging.DEBUG)
+import os
+import logging
+import requests
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.ext import (
+    ApplicationBuilder,
+    ContextTypes,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ConversationHandler,
+    filters
+)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
-print("TELEGRAM_TOKEN =", TELEGRAM_TOKEN)
-print("TMDB_API_KEY =", TMDB_API_KEY)
-print("PORT =", os.getenv("PORT"))
-print("WEBHOOK_URL =", os.getenv("WEBHOOK_URL"))
+logging.basicConfig(level=logging.DEBUG)
 
 GENRES, ACTORS = range(2)
-available_genres = ["боевик","приключения","мультфильм","аниме","биография","комедия","криминал","документальный","драма","семейный","фэнтези","история","ужасы","музыка","детектив","мелодрама","фантастика","телевизионный фильм","триллер","военный","вестерн"]
 
-def fix_genres(user_input):
-    corrected = []
-    for w in user_input:
-        m = difflib.get_close_matches(w.lower().strip(), available_genres, n=1, cutoff=0.6)
-        if m:
-            corrected.append(m[0])
-    return corrected
-
-async def start(update, ctx):
-    kb = [
+def build_keyboard():
+    return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎞 Указать жанры", callback_data="genres")],
         [InlineKeyboardButton("🎭 Указать актёров", callback_data="actors")],
-        [InlineKeyboardButton("🔎 Найти фильмы", callback_data="search")]
-    ]
-    await update.message.reply_text("Привет! Что хочешь сделать?", reply_markup=InlineKeyboardMarkup(kb))
+        [InlineKeyboardButton("🔎 Найти фильмы", callback_data="search")],
+    ])
 
-async def button_handler(update, ctx):
-    q = update.callback_query; await q.answer()
-    if q.data=="genres":
-        text="Введи жанры (по одному, через запятую):\n\n📌 " + ", ".join(available_genres)
-        await q.message.reply_text(text)
+def build_movie_keyboard(movie_id, index):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📖 Описание", callback_data=f"desc|{movie_id}")],
+        [InlineKeyboardButton("➡ Далее", callback_data=f"next|{index+1}")],
+    ])
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Привет! Что хочешь сделать?",
+        reply_markup=build_keyboard()
+    )
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "genres":
+        await query.message.reply_text("Введи жанры через запятую")
         return GENRES
-    if q.data=="actors":
-        await q.message.reply_text("Введи имена актёров через запятую:")
+    elif data == "actors":
+        await query.message.reply_text("Введи имена актёров через запятую")
         return ACTORS
-    if q.data=="search":
-        await show_movie(update, ctx, 0)
-        return ConversationHandler.END
+    elif data == "search":
+        await search_movies(update, context)
+    elif data.startswith("desc|"):
+        movie_id = data.split("|")[1]
+        await send_description(update, context, movie_id)
+    elif data.startswith("next|"):
+        index = int(data.split("|")[1])
+        await send_movie(update, context, index)
 
-async def genres_input(update, ctx):
-    arr = update.message.text.split(",")
-    ctx.user_data["genres"] = fix_genres(arr)
-    await update.message.reply_text("✅ Жанры: " + ", ".join(ctx.user_data["genres"]))
     return ConversationHandler.END
 
-async def actors_input(update, ctx):
-    arr = [a.strip() for a in update.message.text.split(",")]
-    ctx.user_data["actors"] = arr
-    await update.message.reply_text("✅ Актёры: " + ", ".join(arr))
+async def genres_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["genres"] = update.message.text
+    await update.message.reply_text("Жанры сохранены", reply_markup=build_keyboard())
     return ConversationHandler.END
 
-def get_genre_ids(lst):
-    res = requests.get("https://api.themoviedb.org/3/genre/movie/list", params={"api_key":TMDB_API_KEY,"language":"ru"}).json()
-    mp={g["name"].lower():g["id"] for g in res["genres"]}
-    return [mp[g] for g in lst if g in mp]
+async def actors_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["actors"] = update.message.text
+    await update.message.reply_text("Актёры сохранены", reply_markup=build_keyboard())
+    return ConversationHandler.END
 
-def get_actor_ids(lst):
-    ids=[]
-    for name in lst:
-        r=requests.get("https://api.themoviedb.org/3/search/person",params={"api_key":TMDB_API_KEY,"language":"ru","query":name}).json()
-        if r.get("results"): ids.append(r["results"][0]["id"])
-    return ids
+async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    genres = context.user_data.get("genres", "")
+    actors = context.user_data.get("actors", "")
 
-def search_movies(genre_ids,actor_ids):
-    r=requests.get("https://api.themoviedb.org/3/discover/movie", params={"api_key":TMDB_API_KEY,"language":"ru","sort_by":"popularity.desc","vote_average.gte":8,"with_genres":",".join(map(str,genre_ids)),"with_cast":",".join(map(str,actor_ids))}).json()
-    return r.get("results",[])
+    genre_ids = get_genre_ids(genres)
+    actor_ids = get_actor_ids(actors)
 
-async def show_movie(update, ctx, index):
-    q=update.callback_query; await q.answer()
-    if "movies" not in ctx.user_data:
-        g=ctx.user_data.get("genres",[]); a=ctx.user_data.get("actors",[])
-        ctx.user_data["movies"]=search_movies(get_genre_ids(g), get_actor_ids(a))
-    arr=ctx.user_data["movies"]
-    if index>=len(arr):
-        await q.message.reply_text("😔 Больше нет!")
+    url = "https://api.themoviedb.org/3/discover/movie"
+    params = {
+        "api_key": TMDB_API_KEY,
+        "language": "ru",
+        "sort_by": "popularity.desc",
+        "vote_average.gte": 8,
+        "with_genres": ",".join(map(str, genre_ids)) if genre_ids else None,
+        "with_cast": ",".join(map(str, actor_ids)) if actor_ids else None
+    }
+
+    response = requests.get(url, params=params)
+    data = response.json()
+    movies = data.get("results", [])
+
+    if not movies:
+        await update.callback_query.message.reply_text("Фильмы не найдены")
         return
-    m=arr[index]
-    pu=("https://image.tmdb.org/t/p/w500"+m["poster_path"]) if m.get("poster_path") else None
-    cap=f"🎬 <b>{m['title']}</b>\n⭐ <b>{m['vote_average']}</b>"
-    bt=[[InlineKeyboardButton("📖 Описание",callback_data=f"desc|{m['id']}")]]
-    if index+1<len(arr): bt.append([InlineKeyboardButton("➡ Далее",callback_data=f"next|{index+1}")])
-    await q.message.reply_photo(photo=pu,caption=cap,reply_markup=InlineKeyboardMarkup(bt),parse_mode="HTML")
 
-async def show_description(update, ctx):
-    q=update.callback_query; await q.answer()
-    id_=q.data.split("|")[1]
-    r=requests.get(f"https://api.themoviedb.org/3/movie/{id_}",params={"api_key":TMDB_API_KEY,"language":"ru"}).json()
-    await q.message.reply_text(f"<b>{r['title']}</b>\n{r.get('overview','')}", parse_mode="HTML")
+    context.user_data["movies"] = movies
+    context.user_data["index"] = 0
+    await send_movie(update, context, 0)
 
-async def next_movie(update,ctx):
-    idx=int(update.callback_query.data.split("|")[1])
-    await show_movie(update,ctx,idx)
+async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
+    movies = context.user_data.get("movies", [])
+    if index >= len(movies):
+        await update.callback_query.message.reply_text("Фильмы закончились")
+        return
 
-app=ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-conv=ConversationHandler(entry_points=[CallbackQueryHandler(button_handler)], states={GENRES:[MessageHandler(filters.TEXT & ~filters.COMMAND,genres_input)],ACTORS:[MessageHandler(filters.TEXT & ~filters.COMMAND,actors_input)]}, fallbacks=[], allow_reentry=True)
-app.add_handler(CommandHandler("start",start))
-app.add_handler(conv)
-app.add_handler(CallbackQueryHandler(show_description, pattern="desc|"))
-app.add_handler(CallbackQueryHandler(next_movie,pattern=r"^next\|"))
-print("🤖 Bot started! webhook mode")
-app.run_webhook(listen="0.0.0.0", port=int(os.getenv("PORT",3000)), webhook_url=os.getenv("WEBHOOK_URL"))
+    movie = movies[index]
+    context.user_data["index"] = index
+
+    photo_url = f"https://image.tmdb.org/t/p/w500{movie['poster_path']}"
+    caption = f"🎬 <b>{movie['title']}</b>\n⭐ <b>{movie['vote_average']}</b>"
+
+    await update.callback_query.message.reply_photo(
+        photo=photo_url,
+        caption=caption,
+        parse_mode="HTML",
+        reply_markup=build_movie_keyboard(movie["id"], index)
+    )
+
+async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, movie_id: str):
+    url = f"https://api.themoviedb.org/3/movie/{movie_id}"
+    params = {"api_key": TMDB_API_KEY, "language": "ru"}
+    response = requests.get(url, params=params)
+    movie = response.json()
+
+    description = movie.get("overview", "Описание недоступно")
+    await update.callback_query.message.reply_text(f"📖 {description}")
+
+def get_genre_ids(genres_text):
+    if not genres_text:
+        return []
+    genres = [g.strip().lower() for g in genres_text.split(",")]
+    url = f"https://api.themoviedb.org/3/genre/movie/list?api_key={TMDB_API_KEY}&language=ru"
+    data = requests.get(url).json()
+    genre_map = {g["name"].lower(): g["id"] for g in data.get("genres", [])}
+    return [genre_map[g] for g in genres if g in genre_map]
+
+def get_actor_ids(actors_text):
+    if not actors_text:
+        return []
+    actor_ids = []
+    for name in [a.strip() for a in actors_text.split(",")]:
+        url = f"https://api.themoviedb.org/3/search/person?api_key={TMDB_API_KEY}&language=ru&query={name}"
+        res = requests.get(url).json()
+        if res["results"]:
+            actor_ids.append(res["results"][0]["id"])
+    return actor_ids
+
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(button_handler)],
+        states={
+            GENRES: [MessageHandler(filters.TEXT & ~filters.COMMAND, genres_input)],
+            ACTORS: [MessageHandler(filters.TEXT & ~filters.COMMAND, actors_input)]
+        },
+        fallbacks=[],
+        allow_reentry=True
+    )
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(conv_handler)
+    app.add_handler(CallbackQueryHandler(button_handler))
+
+    port = int(os.environ.get("PORT", 8080))
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        webhook_url=os.environ.get("WEBHOOK_URL")
+    )
