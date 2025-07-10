@@ -180,25 +180,25 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: 
     movie = movies[index]
     context.user_data["index"] = index
 
-title = movie.get("title", "Без названия")
-description = movie.get("overview", "Описание недоступно")
-tmdb_rating = movie.get("vote_average", "—")
-imdb_rating = get_imdb_rating(title)
+    title = movie.get("title", "Без названия")
+    description = movie.get("overview", "Описание недоступно")
+    tmdb_rating = movie.get("vote_average", "—")
+    imdb_rating = get_imdb_rating(title)
 
-# Экранируем всё
-escaped_title = escape_markdown(title)
-escaped_description = escape_markdown(description)
-escaped_tmdb = escape_markdown(str(tmdb_rating))
-escaped_imdb = escape_markdown(str(imdb_rating))
+    # Экранируем всё
+    escaped_title = escape_markdown(title)
+    escaped_description = escape_markdown(description)
+    escaped_tmdb = escape_markdown(str(tmdb_rating))
+    escaped_imdb = escape_markdown(str(imdb_rating))
 
-spoiler_description = f"||{escaped_description}||"
+    spoiler_description = f"||{escaped_description}||"
 
-caption = (
-    f"*🎬 {escaped_title}*\n"
-    f"⭐ TMDb: *{escaped_tmdb}*\n"
-    f"🌐 IMDb: *{escaped_imdb}*\n\n"
-    f"{spoiler_description}"
-)
+    caption = (
+        f"*🎬 {escaped_title}*\n"
+        f"⭐ TMDb: *{escaped_tmdb}*\n"
+        f"🌐 IMDb: *{escaped_imdb}*\n\n"
+        f"{spoiler_description}"
+    )
 
     await update.callback_query.message.reply_photo(
         photo=photo_url,
