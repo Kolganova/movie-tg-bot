@@ -119,7 +119,7 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = "https://api.themoviedb.org/3/discover/movie"
     found = []
 
-    for page in range(1, 11):  # до 10 страниц
+    for page in range(1, 5):  # до 10 страниц
         params = dict(base_params, page=page)
         logging.debug(f"[TMDb] discover page={page} params={params}")
         resp = requests.get(url, params=params)
@@ -173,7 +173,7 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: 
         await update.callback_query.message.reply_text("Фильмы закончились", reply_markup=build_keyboard())
         return
 
-    movie = context.user_data["movies"][index]
+    movie = movies[index]
 
     context.user_data["index"] = index
     
