@@ -142,33 +142,40 @@ def clean_text(text: str) -> str:
     return text.encode('utf-16', 'surrogatepass').decode('utf-16')
 
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
-    ...
+    movies = context.user_data.get("movies", [])
+    if index >= len(movies):
+        await update.callback_query.message.reply_text("Фильмы закончились", reply_markup=build_keyboard())
+        return
+
+    movie = movies[index]
+
     tmdb_id = movie["id"]
+    title = movie.get("title", "Без названия")
+    poster = movie.get("poster_path")
+    photo_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
+    tmdb_rating = movie.get("vote_average", "—")
+    imdb_rating = get_imdb_rating(title)
 
-    # Получаем расширенную инфу
-    details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}"
-    details_params = {"api_key": TMDB_API_KEY, "language": "ru"}
-    details = requests.get(details_url, params=details_params).json()
-
+    # Подробности фильма
+    resp = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}",
+                        params={"api_key": TMDB_API_KEY, "language": "ru"})
+    details = resp.json()
     year = details.get("release_date", "")[:4] or "—"
-    countries = ", ".join([c["name"] for c in details.get("production_countries", [])]) or "—"
+    countries = ", ".join(c["name"] for c in details.get("production_countries", [])) or "—"
     overview = details.get("overview", "")
 
+    # Спойлер-описание
+    spoiler = f"\n📖 <spoiler>{overview}</spoiler>" if overview else ""
+
     caption = (
-        f"🎬 <b>{title}</b>\n"
-        f"📅 Год: <b>{year}</b>\n"
+        f"🎬 <b>{title}</b> ({year})\n"
         f"🌍 Страна: <b>{countries}</b>\n"
         f"⭐ TMDB: <b>{tmdb_rating}</b>\n"
-        f"🌐 IMDb: <b>{imdb_rating}</b>\n"
+        f"🌐 IMDb: <b>{imdb_rating}</b>{spoiler}"
     )
 
-    if overview:
-        caption += f"\n📖 <spoiler>{overview}</spoiler>"
-
     await update.callback_query.message.reply_photo(
-        photo=photo_url,
-        caption=caption,
-        parse_mode="HTML",
+        photo=photo_url, caption=caption, parse_mode="HTML",
         reply_markup=build_movie_keyboard(tmdb_id, index)
     )
 
