@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import time
 import logging
 import requests
@@ -120,7 +121,7 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = "https://api.themoviedb.org/3/discover/movie"
     found = []
     # Перебираем до 5 страниц, чтобы найти хотя бы один фильм с IMDb ≥ 8.0
-    for page in range(1, 6):
+    for page in range(1, 10):
         params = dict(base_params, page=page)
         logging.debug(f"[TMDb] discover page={page} params={params}")
         resp = requests.get(url, params=params)
@@ -164,6 +165,11 @@ async def search_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Функция для очистки суррогатных пар
 def clean_text(text: str) -> str:
     return text.encode('utf-16', 'surrogatepass').decode('utf-16')
+
+def escape_markdown(text):
+    # Экранируем специальные символы для MarkdownV2
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
     movies = context.user_data.get("movies", [])
@@ -221,6 +227,7 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, index: 
         parse_mode="HTML",
         reply_markup=build_movie_keyboard(tmdb_id, index)
     )
+
 async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, movie_id: str):
     url = f"https://api.themoviedb.org/3/movie/{movie_id}"
     params = {"api_key": TMDB_API_KEY, "language": "ru"}
@@ -228,9 +235,14 @@ async def send_description(update: Update, context: ContextTypes.DEFAULT_TYPE, m
     movie = response.json()
 
     description = movie.get("overview", "Описание недоступно")
-    description = clean_text(description)  # очищаем от суррогатов
+    escaped_description = escape_markdown(description)
+    spoiler_text = f"||{escaped_description}||"  # спойлер обёртка
 
-    await update.callback_query.message.reply_text(f"📖 {description}", reply_markup=build_keyboard())
+    await update.callback_query.message.reply_text(
+        spoiler_text,
+        parse_mode="MarkdownV2",
+        reply_markup=build_keyboard()
+    )
 
 def parse_years(text: str):
     text = text.strip()
